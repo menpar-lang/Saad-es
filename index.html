@@ -147,7 +147,7 @@ footer{text-align:center;color:var(--muted);font-size:14px;padding:22px 0}
 
  <nav class="nav" role="tablist" aria-label="أقسام الدراسة">
   <button type="button" role="tab" id="tab-foundation" data-view="foundation" aria-controls="view-foundation" aria-selected="true">التأسيس</button>
-  <button type="button" role="tab" id="tab-training" data-view="training" aria-controls="view-training" aria-selected="false">التدريب</button>
+  <button type="button" role="tab" id="tab-training" data-view="training" aria-controls="view-training" aria-selected="false">التدريب والكويزات</button>
  </nav>
 
  <section id="view-foundation" role="tabpanel" aria-labelledby="tab-foundation">
@@ -184,7 +184,7 @@ footer{text-align:center;color:var(--muted);font-size:14px;padding:22px 0}
 
   <div class="panel">
    <div class="bank-head"><h2>بنك الأسئلة الشامل</h2><span class="bank-count" id="bank-count">1000 سؤال</span></div>
-   <p class="hint">اختر المادة وعدد الأسئلة في الجولة (متوفر 1000 سؤال موزعة على جميع المواد). بعد كل إجابة يظهر التصحيح والشرح.</p>
+   <p class="hint">اختر المادة وعدد الأسئلة في الجولة (متوفر 1000 سؤال موزعة بالتساوي). بعد كل إجابة يظهر التصحيح والشرح.</p>
    <div class="quiz-tools">
     <div><label class="label" for="quiz-subject">المادة</label>
      <select id="quiz-subject">
@@ -310,4 +310,4 @@ footer{text-align:center;color:var(--muted);font-size:14px;padding:22px 0}
   result.style.setProperty("--accent", plan.color);
   let markup = `<div class="summary"><h3 id="plan-title"></h3><p id="sum-line"></p>
     <div class="bar"><i id="bar"></i></div>
-    <div class="progress-details"><span id="perce
+    <div class="progress-details"><span id="pe
