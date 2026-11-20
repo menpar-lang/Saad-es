@@ -1,603 +1,330 @@
+"use strict";
+(() => {
+ const $ = id => document.getElementById(id);
+ const number = n => Number(n).toLocaleString("ar-EG");
+
+ /* عداد الاختبار: غيّر التاريخ التالي فقط عند اعتماد الموعد الرسمي. */
+ const EXAM_DATE = "2027-05-27T00:00:00+03:00";
+ function updateCountdown(){
+  const diff = new Date(EXAM_DATE).getTime() - Date.now();
+  if (!Number.isFinite(diff) || diff <= 0){
+   ["days","hours","minutes","seconds"].forEach(id => $(id).textContent = "00");
+   $("exam-label").textContent = "حان موعد الاختبار أو انتهى الموعد المحدد";
+   return;
+  }
+  $("days").textContent = number(Math.floor(diff / 86400000));
+  $("hours").textContent = String(Math.floor((diff % 86400000) / 3600000)).padStart(2,"0");
+  $("minutes").textContent = String(Math.floor((diff % 3600000) / 60000)).padStart(2,"0");
+  $("seconds").textContent = String(Math.floor((diff % 60000) / 1000)).padStart(2,"0");
+ }
+ updateCountdown();
+ window.setInterval(updateCountdown, 1000);
+
+ /* التبديل بين التأسيس والتدريب */
+ document.querySelectorAll(".nav [role=tab]").forEach(tab => {
+  tab.addEventListener("click", () => {
+   const activeView = tab.dataset.view;
+   document.querySelectorAll(".nav [role=tab]").forEach(item => {
+    const active = item === tab;
+    item.setAttribute("aria-selected", String(active));
+    item.tabIndex = active ? 0 : -1;
+   });
+   $("view-foundation").hidden = activeView !== "foundation";
+   $("view-training").hidden = activeView !== "training";
+   if (activeView === "training") $("quiz-subject").focus({preventScroll:true});
+  });
+ });
+
+ /* إنشاء الجداول وحفظ الإنجاز */
+ const STORAGE_KEY = "minbar_saved_study_plan_final";
+ const subjects = {
+  math:{name:"الرياضيات",color:"#4d83ff"},
+  phys:{name:"الفيزياء",color:"#a876ff"},
+  chem:{name:"الكيمياء",color:"#ed9142"},
+  bio:{name:"الأحياء",color:"#35bd8b"}
+ };
+ const cheers = [
+  "بداية ممتازة، أحسنت!","كل يوم تنجزه يقربك من هدفك.",
+  "استمر، فالنتائج الكبيرة تبدأ بخطوات صغيرة.","تعبك اليوم يصنع فرقًا في يوم الاختبار.",
+  "الالتزام أهم من المثالية، واصل.","أنت تتقدم، لا تتوقف."
+ ];
+ function savePlan(plan){
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(plan)); }
+  catch(error){ console.warn("تعذر حفظ الجدول على هذا الجهاز", error); }
+ }
+ function readPlan(){
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "null"); }
+  catch(error){ return null; }
+ }
+ function clearPlan(){
+  try { localStorage.removeItem(STORAGE_KEY); } catch(error){ console.warn(error); }
+ }
+ function splitTasks(total, days){
+  const base = Math.floor(total / days), extra = total % days;
+  let first = 1;
+  return Array.from({length:days}, (_,i) => {
+   const count = base + (i < extra ? 1 : 0);
+   const task = {from:first, to:first + count - 1, count};
+   first += count;
+   return task;
+  });
+ }
+ function updateProgress(){
+  const entries = [...$("result").querySelectorAll(".day")];
+  const done = entries.filter(day => day.querySelector("input").checked).length;
+  const percent = entries.length ? Math.round(done / entries.length * 100) : 0;
+  $("sum-line").textContent = `أنجزت ${number(done)} من ${number(entries.length)} يوم`;
+  $("bar").style.width = percent + "%";
+  $("percent").textContent = percent + "% إنجاز";
+  $("remaining").textContent = `متبقي ${number(entries.length-done)} يوم`;
+  $("finish").hidden = done !== entries.length;
+ }
+ function renderPlan(plan, shouldScroll=true){
+  const result = $("result");
+  result.style.setProperty("--accent", plan.color);
+  let markup = `<div class="summary"><h3 id="plan-title"></h3><p id="sum-line"></p>
+    <div class="bar"><i id="bar"></i></div>
+    <div class="progress-details"><span id="percent">0% إنجاز</span><span id="remaining"></span></div></div>
+    <button class="btn light" id="pdf-btn" type="button">طباعة الجدول / حفظ PDF</button>
+    <button class="btn dark" id="new-plan-btn" type="button">إنشاء جدول جديد</button><div class="days">`;
+  plan.parts.forEach((part,index) => {
+   const taskText = plan.kind === "foundation"
+    ? (part.count === 1 ? `المحاضرة ${number(part.from)}` : `من المحاضرة ${number(part.from)} إلى ${number(part.to)}`)
+    : `${number(part.count)} سؤال`;
+   const detail = plan.kind === "foundation"
+    ? `${number(part.count)} محاضرة`
+    : `من السؤال ${number(part.from)} إلى ${number(part.to)}`;
+   const checked = plan.checked[index] === true;
+   markup += `<article class="day ${checked ? "is-done" : ""}">
+    <div class="day-body"><div class="day-top"><span class="day-no">اليوم ${number(index+1)}</span>
+    <label class="done"><input type="checkbox" data-day="${index}" ${checked ? "checked" : ""}> أنجزت اليوم</label></div>
+    <div class="task">${taskText}<small>${detail}</small></div></div>
+    <div class="cheer">${cheers[index % cheers.length]}</div></article>`;
+  });
+  markup += `</div><div class="finish" id="finish" hidden>مبروك! أنهيت الخطة كاملة. استمر على هذا المستوى.</div>`;
+  result.innerHTML = markup;
+  result.hidden = false;
+  $("plan-title").textContent = plan.title;
+  $("pdf-btn").addEventListener("click", () => window.print());
+  $("new-plan-btn").addEventListener("click", () => {
+   if (window.confirm("سيتم حذف الجدول الحالي من هذا الجهاز. هل تريد المتابعة؟")){
+    clearPlan(); result.hidden = true; result.innerHTML = "";
+    window.scrollTo({top:0,behavior:"smooth"});
+   }
+  });
+  result.querySelectorAll('input[type="checkbox"][data-day]').forEach(box => {
+   box.addEventListener("change", () => {
+    box.closest(".day").classList.toggle("is-done", box.checked);
+    const current = readPlan();
+    if (current && Array.isArray(current.parts)){
+     current.checked = [...result.querySelectorAll('input[type="checkbox"][data-day]')].map(input => input.checked);
+     savePlan(current);
+    }
+    updateProgress();
+   });
+  });
+  updateProgress();
+  if (shouldScroll) result.scrollIntoView({behavior:"smooth",block:"start"});
+ }
+ function createPlan(kind,title,color,parts){
+  const previous = readPlan();
+  if (previous && Array.isArray(previous.parts) && previous.parts.length &&
+      !window.confirm("لديك جدول محفوظ. هل تريد استبداله بالجدول الجديد؟")) return;
+  const plan = {kind,title,color,parts,checked:parts.map(() => false)};
+  savePlan(plan);
+  renderPlan(plan);
+ }
+ function validInt(id,min,max){
+  const value = Number($(id).value);
+  return Number.isInteger(value) && value >= min && value <= max ? value : null;
+ }
+ $("go-found").addEventListener("click", () => {
+  const lectures = validInt("lec",1,300), days = validInt("fdays",1,120);
+  const selected = document.querySelector('input[name="subj"]:checked');
+  if (!lectures || !days || !selected){
+   $("err-found").textContent = "تأكد من إدخال عدد المحاضرات من 1 إلى 300 وعدد الأيام من 1 إلى 120.";
+   return;
+  }
+  $("err-found").textContent = "";
+  const subject = subjects[selected.value];
+  createPlan("foundation",`تأسيس ${subject.name}: ${number(lectures)} محاضرة في ${number(days)} يوم`,subject.color,splitTasks(lectures,days));
+ });
+ $("go-practice").addEventListener("click", () => {
+  const questions = validInt("qs",1,5000), days = validInt("pdays",1,120);
+  if (!questions || !days){
+   $("err-practice").textContent = "تأكد من إدخال عدد الأسئلة من 1 إلى 5000 وعدد الأيام من 1 إلى 120.";
+   return;
+  }
+  $("err-practice").textContent = "";
+  createPlan("training",`تدريب: ${number(questions)} سؤال في ${number(days)} يوم`,"#ec5d91",splitTasks(questions,days));
+ });
+ const savedPlan = readPlan();
+ if (savedPlan && ["foundation","training"].includes(savedPlan.kind) &&
+     typeof savedPlan.title === "string" && typeof savedPlan.color === "string" &&
+     Array.isArray(savedPlan.parts) && savedPlan.parts.length > 0 && savedPlan.parts.length <= 120){
+  if (!Array.isArray(savedPlan.checked) || savedPlan.checked.length !== savedPlan.parts.length)
+   savedPlan.checked = savedPlan.parts.map(() => false);
+  renderPlan(savedPlan,false);
+ }
+
+ /* بنك الأسئلة الأصلي: 250 سؤالًا لكل مادة = 1000 سؤال.
+    صُممت الأسئلة هنا للتدريب، وليست منقولة من تجميعات أو كتب محمية. */
+ const questionBank = [];
+ const subjectLabel = {math:"الرياضيات",phys:"الفيزياء",chem:"الكيمياء",bio:"الأحياء"};
+ function addQuestion(subject,topic,question,answer,distractors,explanation){
+  const correct = String(answer);
+  const choices = [correct, ...distractors.map(String)].filter((v,i,a) => a.indexOf(v)===i).slice(0,4);
+  let fill = 1;
+  const numeric = /^(-?\d+(?:\.\d+)?)(.*)$/.exec(correct);
+  while(choices.length < 4){
+   const candidate = numeric
+    ? `${Number(numeric[1]) + fill * (fill % 2 ? 2 : -3)}${numeric[2]}`
+    : `خيار بديل ${fill}`;
+   if(!choices.includes(candidate)) choices.push(candidate);
+   fill++;
+  }
+  const rotate = questionBank.length % 4;
+  const arranged = choices.slice(rotate).concat(choices.slice(0,rotate));
+  questionBank.push({
+   id:questionBank.length+1,subject,topic,question,options:arranged,
+   answer:arranged.indexOf(correct),explain:explanation
+  });
+ }
+ const d3 = (a,b,c) => [a,b,c];
+
+ /* الرياضيات: عشر مهارات × 25 سؤالًا */
+ for(let i=1;i<=25;i++){
+  let a=14+i*3,b=7+i*2,s=a+b;
+  addQuestion("math","العمليات الحسابية",`احسب ناتج ${a} + ${b}.`,s,d3(s+2,s-2,s+10),`نجمع العددين: ${a} + ${b} = ${s}.`);
+  a=65+i*3;b=12+i;s=a-b;
+  addQuestion("math","العمليات الحسابية",`ما ناتج ${a} − ${b}؟`,s,d3(s+1,s-1,s+5),`نطرح ${b} من ${a} فيكون الناتج ${s}.`);
+  a=2+(i%9);b=4+(i%7);s=a*b;
+  addQuestion("math","الضرب والقسمة",`أوجد حاصل ضرب ${a} × ${b}.`,s,d3(s+a,s-b,s+2),`حاصل الضرب هو ${a} × ${b} = ${s}.`);
+  b=2+(i%8);const q=3+i*2;a=b*q;
+  addQuestion("math","الضرب والقسمة",`إذا كان ${a} ÷ ${b} = س، فما قيمة س؟`,q,d3(q+1,q-1,q+3),`نقسم ${a} على ${b}: الناتج ${q}.`);
+  const base=100+i*20,pct=[10,20,25,50,15][i%5],amount=base*pct/100;
+  addQuestion("math","النسبة المئوية",`كم تساوي ${pct}٪ من ${base}؟`,amount,d3(amount+5,amount-5,amount+10),`نحسب النسبة: ${base} × ${pct} ÷ 100 = ${amount}.`);
+  const coef=2+(i%7),x=i+2,constant=3+i*2,total=coef*x+constant;
+  addQuestion("math","المعادلات",`إذا كان ${coef}س + ${constant} = ${total}، فما قيمة س؟`,x,d3(x+1,x-1,-x),`نطرح ${constant} من الطرفين ثم نقسم على ${coef}، فنحصل على س = ${x}.`);
+  const n=i+3,sq=n*n;
+  addQuestion("math","القوى والجذور",`ما قيمة ${n}²؟`,sq,d3(sq+n,sq-1,sq+2),`تربيع ${n} يعني ${n} × ${n} = ${sq}.`);
+  const length=i+4,width=2+(i%7),area=length*width;
+  addQuestion("math","الهندسة",`مستطيل طوله ${length} سم وعرضه ${width} سم، فما مساحته؟`,area,d3(2*(length+width),area+length,area-width),`مساحة المستطيل = الطول × العرض = ${length} × ${width} = ${area} سم².`);
+  const mean=(i+(i+2)+(i+4))/3;
+  addQuestion("math","الإحصاء",`ما المتوسط الحسابي للأعداد ${i} و${i+2} و${i+4}؟`,mean,d3(mean+1,mean-1,mean+2),`المتوسط = مجموع القيم ÷ عددها = ${3*mean} ÷ 3 = ${mean}.`);
+  const first=i+1,step=2+(i%5),next=first+3*step;
+  addQuestion("math","المتتابعات",`ما العدد التالي في المتتابعة ${first}، ${first+step}، ${first+2*step}، ...؟`,next,d3(next+step,next-1,next+2),`الفرق ثابت ويساوي ${step}؛ لذا نضيفه إلى ${first+2*step} فيكون الناتج ${next}.`);
+ }
+
+ /* الفيزياء: عشر مهارات × 25 سؤالًا */
+ for(let i=1;i<=25;i++){ 
+
+ملاحظة: المقتطف السابق كان جزءًا من JavaScript فقط. **انسخ النسخة التالية كاملة من أول سطر إلى آخر سطر**؛ وهي الملف نفسه الجاهز للتشغيل.
+
+```html
 <!doctype html>
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#70d1f5">
-<meta name="description" content="منبر التحصيلي - جداول التأسيس والتدريب والكويزات للطلاب والطالبات">
+<meta name="description" content="منبر التحصيلي - جداول تأسيس وتدريب وبنك أسئلة تفاعلي مجاني">
 <title>منبر التحصيلي</title>
-
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap">
-
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap" rel="stylesheet">
 <style>
 :root{
---bg:#080d19;
---surface:#111d33;
---fg:#f5f6ff;
---muted:#a8b8d2;
---line:#293d5b;
---brand:#35bdf3;
---brand2:#536dff;
---math:#4d83ff;
---phys:#a876ff;
---chem:#ed9142;
---bio:#35bd8b;
---digi:#e3b93c;
---crit:#ff7a59;
---practice:#ec5d91;
---subj:var(--math);
---font:"Tajawal",Arial,sans-serif;
+ --bg:#080d19;--surface:#111d33;--surface2:#172640;--fg:#f5f6ff;
+ --muted:#a8b8d2;--line:#293d5b;--brand:#35bdf3;--brand2:#536dff;
+ --math:#4d83ff;--phys:#a876ff;--chem:#ed9142;--bio:#35bd8b;
+ --practice:#ec5d91;--font:"Tajawal",Arial,sans-serif;--accent:var(--math)
 }
-
 *{box-sizing:border-box}
 html{scroll-behavior:smooth}
-
 body{
-background:linear-gradient(180deg,#83dcff 0%,#52b9ed 12%,#287ebc 27%,#173e70 43%,#102543 62%,#080d19 100%);
-background-attachment:fixed;
-color:var(--fg);
-font-family:var(--font);
-font-size:16px;
-line-height:1.7;
-margin:0;
-direction:rtl;
-text-align:right;
+ margin:0;direction:rtl;text-align:right;color:var(--fg);font-family:var(--font);
+ font-size:16px;line-height:1.7;
+ background:linear-gradient(180deg,#83dcff 0%,#52b9ed 12%,#287ebc 27%,#173e70 43%,#102543 62%,#080d19 100%);
+ background-attachment:fixed
 }
-
-button,input{font-family:var(--font)}
-button{touch-action:manipulation}
-.wrap{max-width:880px;margin:auto;padding:0 16px}
-
-/* الرأس السماوي */
-.hero{
-background:radial-gradient(ellipse at 70% 0%,#ffffff55,transparent 60%),linear-gradient(135deg,#91e2ff,#55bdf0,#348ed0);
-color:white;
-padding:27px 0 58px;
-border-bottom:1px solid #ffffff55;
-}
+button,input,select{font:inherit}button{touch-action:manipulation}
+.wrap{width:min(100% - 28px,960px);margin-inline:auto}
+.hero{padding:26px 0 64px;background:radial-gradient(ellipse at 70% 0%,#ffffff55,transparent 60%),linear-gradient(135deg,#91e2ff,#55bdf0,#348ed0);border-bottom:1px solid #ffffff55}
 .hero-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
-.brand-copy{text-align:right}
-.brand-copy h1{font-size:clamp(30px,7vw,44px);font-weight:800;color:#092b50;margin:0}
-.brand-copy p{margin:5px 0 0;color:#eaf8ff;font-size:16px;font-weight:700}
-.free-badge{
-flex-shrink:0;padding:8px 16px;border-radius:30px;background:#ffffffdf;border:1px solid white;
-color:#123b60;font-weight:800;font-size:16px;box-shadow:0 5px 18px #064c8430;
-}
-
-/* عداد التحصيلي */
-.countdown{
-margin-top:18px;padding:12px 14px;border-radius:16px;
-background:#ffffff38;border:1px solid #ffffff99;text-align:center;
-}
-.cd-title{font-weight:800;color:#092b50;font-size:17px;line-height:1.5}
-.cd-date{font-weight:700;color:#eaf8ff;font-size:14px}
-.cd-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:10px}
-.cd-box{background:#ffffffe6;border-radius:12px;padding:6px 2px;color:#123b60;box-shadow:0 4px 14px #064c8426}
-.cd-box b{display:block;font-size:26px;font-weight:800;line-height:1.3}
-.cd-box span{font-size:13px;font-weight:700}
-.cd-done{font-weight:800;color:#092b50;font-size:20px;padding:8px 0}
-
-/* التبويبات */
-.tabs{
-display:grid;grid-template-columns:repeat(3,1fr);gap:8px;
-background:var(--surface);border:1px solid var(--line);border-radius:16px;
-padding:6px;margin-top:-32px;position:relative;
-}
-.tab{
-font:inherit;font-size:20px;font-weight:800;border:0;background:transparent;
-color:var(--muted);padding:12px 4px;border-radius:11px;cursor:pointer;transition:.2s;
-}
-.tab[aria-selected="true"]{background:var(--brand);color:white}
-.tab[data-tab="practice"][aria-selected="true"]{background:var(--practice)}
-.tab[data-tab="quiz"][aria-selected="true"]{background:var(--brand2)}
-
-/* الأقسام */
+.brand-copy h1{font-size:clamp(30px,7vw,44px);font-weight:800;color:#092b50;margin:0;line-height:1.2}
+.brand-copy p{margin:6px 0 0;color:#eaf8ff;font-weight:700}
+.free-badge{flex-shrink:0;padding:8px 15px;border-radius:30px;background:#ffffffdf;border:1px solid white;color:#123b60;font-weight:800;box-shadow:0 5px 18px #064c8430}
+.countdown{margin-top:-40px;position:relative;background:linear-gradient(135deg,#102541,#172d50);border:1px solid #5aaee0;border-radius:20px;padding:18px;box-shadow:0 14px 35px #06172b55}
+.count-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.count-head h2{margin:0;font-size:21px}
+.count-label{color:#b9dfff;font-weight:700;font-size:14px}
+.timer{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin-top:14px}
+.time-unit{background:#0b172a;border:1px solid #294c70;border-radius:13px;text-align:center;padding:10px 4px}
+.time-unit strong{display:block;font-size:clamp(24px,6vw,36px);line-height:1.25;color:#7bd8ff;font-weight:800;font-variant-numeric:tabular-nums}
+.time-unit span{font-size:13px;color:#b8cce3}
+.count-note{font-size:12px;color:#9eb5d0;margin:10px 0 0}
+.nav{display:grid;grid-template-columns:1fr 1fr;gap:9px;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:7px;margin-top:16px}
+.nav button{border:0;border-radius:11px;background:transparent;color:var(--muted);font-size:18px;font-weight:800;padding:12px 8px;cursor:pointer;transition:background .18s,color .18s,transform .18s}
+.nav button:hover{background:#233957;color:#fff}
+.nav button:active,.btn:active,.telegram-toggle:active{transform:scale(.985)}
+.nav button[aria-selected=true]{background:var(--brand);color:#fff;box-shadow:0 4px 12px #35bdf344}
 .panel{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:20px;margin-top:16px}
-.panel h2{margin:0 0 4px;font-size:22px}
+.panel h2{margin:0 0 4px;font-size:23px}
 .hint{margin:0 0 16px;color:var(--muted)}
-.label{display:block;font-weight:700;margin-bottom:8px}
-
-.chips{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:18px}
-.chip{position:relative}
-.chip input{position:absolute;opacity:0;inset:0}
-.chip span{
-display:block;text-align:center;font-weight:800;font-size:18px;padding:12px 8px;
-border-radius:12px;border:2px solid var(--c);color:var(--c);transition:.2s;cursor:pointer;
-}
-.chip input:checked+span{background:var(--c);color:white}
+.label{display:block;font-weight:700;margin-bottom:7px}
+.chips{display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:10px;margin-bottom:18px}
+.chip{position:relative}.chip input{position:absolute;opacity:0;inset:0}
+.chip span{display:block;text-align:center;font-weight:800;font-size:17px;padding:11px 7px;border-radius:12px;border:2px solid var(--c);color:var(--c);cursor:pointer;transition:background .15s,color .15s}
+.chip input:checked+span{background:var(--c);color:#fff}
 .chip input:focus-visible+span{outline:3px solid white;outline-offset:3px}
-
-.fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin-bottom:18px}
-
-input[type=number]{
-width:100%;font:inherit;font-size:20px;font-weight:700;padding:10px 14px;border-radius:12px;
-border:2px solid var(--line);background:#0c1120;color:var(--fg);
-}
-input[type=number]:focus{outline:2px solid var(--brand);border-color:var(--brand)}
-
-.go{
-font:inherit;font-size:19px;font-weight:800;width:100%;border:0;border-radius:14px;padding:14px;
-color:white;background:linear-gradient(135deg,var(--brand),var(--brand2));cursor:pointer;transition:.2s;
-}
-.go:hover{filter:brightness(1.12)}
-.go:active{transform:scale(.99)}
-.go:disabled{opacity:.4;cursor:default;filter:none}
-.go.practice{background:linear-gradient(135deg,#d84278,#a92d69)}
-
-.err{color:#ff7da6;font-weight:700;margin:10px 0;min-height:1.5em}
-#result[hidden]{display:none}
-#result.hide-for-quiz{display:none}
-
-/* ملخص الخطة */
-.summary{background:var(--subj);color:white;border-radius:16px;padding:18px 20px;margin-top:16px}
-.summary h3{margin:0 0 4px;font-size:22px}
-.summary p{margin:0}
-.bar{height:12px;border-radius:99px;background:#ffffff4d;margin-top:12px;overflow:hidden}
-.bar i{display:block;height:100%;width:0;background:white;border-radius:99px;transition:width .4s}
-.progress-details{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:9px;font-weight:700;font-size:14px}
-
-/* الأيام */
-.days{display:grid;gap:14px;margin-top:16px}
-.day{background:var(--surface);border:1px solid var(--line);border-radius:16px;overflow:hidden}
-.day-body{padding:16px 18px;display:grid;gap:10px}
-.day-top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
-.day-no{font-weight:800;font-size:19px;color:var(--subj)}
-.task{font-size:20px;font-weight:700}
-.task small{display:block;font-size:15px;font-weight:500;color:var(--muted)}
-.done{display:inline-flex;align-items:center;gap:8px;font-weight:700;cursor:pointer}
-.done input{width:22px;height:22px;accent-color:var(--subj);cursor:pointer}
-.cheer{background:var(--subj);color:white;padding:12px 18px;font-weight:700;font-size:17px}
+.fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:18px}
+input[type=number],select,.text-input{width:100%;font:inherit;font-size:18px;font-weight:700;padding:10px 13px;border-radius:12px;border:2px solid var(--line);background:#0c1120;color:var(--fg)}
+input:focus,select:focus,.text-input:focus{outline:2px solid var(--brand);border-color:var(--brand)}
+.btn{font:inherit;font-size:18px;font-weight:800;width:100%;border:0;border-radius:13px;padding:13px;color:#fff;background:linear-gradient(135deg,var(--brand),var(--brand2));cursor:pointer;transition:filter .15s,transform .15s}
+.btn:hover{filter:brightness(1.1)}.btn:disabled{opacity:.55;cursor:not-allowed;filter:none}
+.btn.pink{background:linear-gradient(135deg,#d84278,#a92d69)}
+.btn.dark{margin-top:9px;background:#26334d;border:1px solid #3b4b6b}
+.btn.light{margin-top:9px;background:#e8eaf5;color:#111827}
+.err{color:#ff8eae;font-weight:700;min-height:1.4em;margin:8px 0 0}
+[hidden]{display:none!important}
+.summary{background:var(--accent);color:white;border-radius:15px;padding:17px 19px;margin-top:16px}
+.summary h3{margin:0 0 4px;font-size:21px}.summary p{margin:0}
+.bar{height:11px;border-radius:99px;background:#ffffff4d;margin-top:12px;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:white;border-radius:99px;transition:width .3s}
+.progress-details{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:8px;font-weight:700;font-size:14px}
+.days{display:grid;gap:12px;margin-top:15px}
+.day{background:var(--surface);border:1px solid var(--line);border-radius:15px;overflow:hidden}
+.day-body{padding:14px 17px;display:grid;gap:9px}
+.day-top{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.day-no{font-size:18px;font-weight:800;color:var(--accent)}
+.task{font-size:19px;font-weight:700}.task small{display:block;color:var(--muted);font-size:14px;font-weight:500}
+.done{display:inline-flex;align-items:center;gap:7px;font-weight:700;cursor:pointer}
+.done input{width:21px;height:21px;accent-color:var(--accent)}
 .day.is-done .task{text-decoration:line-through;opacity:.6}
-.finish{
-text-align:center;font-size:22px;font-weight:800;padding:18px;border-radius:16px;color:white;
-background:linear-gradient(135deg,var(--brand),var(--brand2));
-}
-.go.pdf{margin-top:14px;background:#e8eaf5;color:#111827}
-.go.new-plan{margin-top:10px;background:#26334d;color:#fff;border:1px solid #3b4b6b}
-
-/* الكويزات */
-.qchip{
-font:inherit;display:block;width:100%;text-align:center;padding:12px 8px;border-radius:12px;
-border:2px solid var(--c);background:transparent;color:var(--c);cursor:pointer;transition:.2s;
-}
-.qchip b{display:block;font-size:18px;font-weight:800;line-height:1.5}
-.qchip small{display:block;color:var(--muted);font-weight:700;font-size:14px}
-.qchip .mbar{height:6px;border-radius:99px;background:#ffffff1f;margin-top:8px;overflow:hidden}
-.qchip .mbar i{display:block;height:100%;background:var(--c);border-radius:99px}
-.qchip:hover{background:var(--c);color:white}
-.qchip:hover small{color:white}
-.qchip:hover .mbar i{background:white}
-.qsum{margin-top:0;margin-bottom:16px}
-.qtop{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
-.qback{
-font:inherit;font-weight:800;font-size:16px;border:1px solid #3b4b6b;background:#26334d;color:#fff;
-border-radius:11px;padding:8px 14px;cursor:pointer;
-}
-.qcount{font-weight:800;color:var(--subj)}
-.qbar{height:8px;border-radius:99px;background:var(--line);overflow:hidden;margin-bottom:14px}
-.qbar i{display:block;height:100%;background:var(--subj);border-radius:99px;transition:width .3s}
-.qcard{
-background:#0c1120;border:1px solid var(--line);border-radius:14px;padding:16px 18px;
-font-size:19px;font-weight:700;line-height:1.9;white-space:pre-line;margin-bottom:12px;
-}
-.qopt{
-display:block;width:100%;text-align:right;font:inherit;font-size:17px;font-weight:700;color:var(--fg);
-background:#0c1120;border:2px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:10px;
-cursor:pointer;transition:.2s;
-}
-.qopt:hover:not(:disabled){border-color:var(--subj)}
-.qopt:disabled{cursor:default}
-.qopt.ok{border-color:var(--bio);background:#35bd8b2e}
-.qopt.no{border-color:var(--practice);background:#ec5d9126}
-.qfb{border-radius:12px;padding:10px 14px;font-weight:700;margin-bottom:4px}
-.qfb.ok{background:#35bd8b33;color:#9df0cf}
-.qfb.no{background:#ec5d9133;color:#ffb3cf}
-.qnav{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
-.qnav .go{margin:0;font-size:17px;padding:12px;background:linear-gradient(135deg,var(--subj),var(--brand2))}
-.qnav .go.gray{background:#26334d;border:1px solid #3b4b6b}
-.qfin{margin-top:0}
-
-/* التليجرام */
+.cheer{background:var(--accent);color:white;padding:10px 17px;font-weight:700}
+.finish{text-align:center;font-size:20px;font-weight:800;padding:17px;border-radius:14px;color:white;background:linear-gradient(135deg,var(--brand),var(--brand2));margin-top:14px}
+.bank-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.bank-count{background:#0b172a;border:1px solid #315071;color:#9bdfff;border-radius:30px;padding:5px 12px;font-size:14px;font-weight:800}
+.quiz-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:14px 0}
+.quiz-card{background:#0d182b;border:1px solid var(--line);border-radius:15px;padding:17px;margin-top:12px}
+.quiz-meta{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;color:var(--muted);font-size:13px;font-weight:700}
+.quiz-question{font-size:20px;font-weight:800;margin:12px 0}
+.options{display:grid;gap:9px}
+.option{width:100%;text-align:right;background:#172640;color:var(--fg);border:1px solid #344b6d;border-radius:11px;padding:12px;cursor:pointer;font-weight:700;transition:border-color .15s,background .15s}
+.option:hover:not(:disabled){border-color:var(--brand);background:#203553}
+.option:disabled{cursor:default;opacity:1}
+.option.correct{border-color:#35bd8b;background:#123c37}
+.option.wrong{border-color:#ec5d91;background:#482238}
+.feedback{margin-top:12px;padding:11px;border-radius:10px;background:#172640;color:#dbe8f8}
+.quiz-actions{display:flex;gap:9px;margin-top:12px}
+.quiz-actions button{flex:1}
+.score{background:#172640;border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:12px;font-weight:800}
 .telegram-area{margin:20px 0}
-.telegram-toggle{
-width:100%;display:flex;align-items:center;justify-content:center;gap:10px;font:inherit;font-size:18px;
-font-weight:800;color:white;background:#17243c;border:1px solid #344666;border-radius:15px;padding:14px;
-cursor:pointer;transition:.2s;
-}
-.telegram-toggle:hover{background:#213354}
-.telegram-toggle .arrow{transition:.25s}
-.telegram-toggle[aria-expanded=true] .arrow{transform:rotate(180deg)}
-.telegram-list{display:grid;grid-template-rows:0fr;opacity:0;transition:.28s}
-.telegram-list.open{grid-template-rows:1fr;opacity:1}
+.telegram-toggle{width:100%;display:flex;align-items:center;justify-content:center;gap:10px;font:inherit;font-size:18px;font-weight:800;color:white;background:#17243c;border:1px solid #344666;border-radius:15px;padding:14px;cursor:pointer}
+.arrow{transition:.25s}.telegram-toggle[aria-expanded=true] .arrow{transform:rotate(180deg)}
+.telegram-list{display:grid;grid-template-rows:0fr;opacity:0;transition:grid-template-rows .28s,opacity .28s}.telegram-list.open{grid-template-rows:1fr;opacity:1}
 .telegram-list-inner{overflow:hidden;min-height:0}
-.channel-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;padding-top:12px}
-.channel-link{
-display:flex;align-items:center;justify-content:space-between;gap:12px;text-decoration:none;color:white;
-background:var(--surface);border:1px solid var(--line);border-radius:13px;padding:13px 15px;transition:.2s;
-}
-.channel-link:hover{border-color:var(--brand)}
-.channel-link strong{display:block}
-.channel-link small{display:block;color:var(--muted);direction:ltr;text-align:right}
-.tg-icon{display:grid;place-items:center;width:37px;height:37px;border-radius:11px;background:#1d4770;color:#8dd3ff}
-
-/* الأدعية */
-.prayer{
-margin-top:22px;padding:19px 20px;border-radius:16px;background:linear-gradient(145deg,#151d31,#211c3b);
-border:1px solid #34365a;text-align:center;
-}
-.prayer h2{margin:0 0 8px;font-size:20px;color:#d9d5ff}
-.prayer p{margin:0;color:#e5e8f5;font-size:16px;line-height:2}
-.personal-prayer{margin-top:18px;padding:18px;border-radius:15px;background:#101a2b;border:1px solid #465080;text-align:center}
-.personal-prayer h3{color:#b9b4ff;margin:0 0 8px;font-size:20px}
-.personal-prayer p{color:#e5e8f5;margin:0;line-height:2}
-
-footer{text-align:center;color:var(--muted);font-size:14px;padding:24px 0 20px}
-
-/* الجوال */
-@media(max-width:480px){
-.hero{padding:23px 0 56px}
-.hero-row{gap:8px}
-.brand-copy h1{font-size:27px}
-.brand-copy p{font-size:13px}
-.free-badge{padding:8px 11px;font-size:14px}
-.panel{padding:16px}
-.tab{font-size:17px}
-.cd-title{font-size:15px}
-.cd-box b{font-size:22px}
-.qcard{font-size:17px}
-.qopt{font-size:16px}
-}
-
-/* PDF */
-@media print{
-body{background:white;color:#172036}
-.hero,.tabs,.panel,.go,.done,.err,footer,.telegram-area,.prayer,.personal-prayer{display:none!important}
-.summary,.cheer{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-.day{break-inside:avoid}
-.day-body{color:#172036}
-.task small{color:#555}
-}
-</style>
-</head>
-
-<body>
-
-<header class="hero">
-<div class="wrap">
-  <div class="hero-row">
-    <div class="brand-copy">
-      <h1>منبر التحصيلي</h1>
-      <p>علمٌ يُتقن، وهدفٌ يُدرك</p>
-    </div>
-    <div class="free-badge">مجاني 100٪</div>
-  </div>
-
-  <div class="countdown" id="countdown">
-    <div class="cd-title">باقي على التحصيلي الاعتيادي</div>
-    <div class="cd-date" id="cd-date"></div>
-    <div class="cd-grid" id="cd-grid">
-      <div class="cd-box"><b id="cd-d">٠</b><span>يوم</span></div>
-      <div class="cd-box"><b id="cd-h">٠</b><span>ساعة</span></div>
-      <div class="cd-box"><b id="cd-m">٠</b><span>دقيقة</span></div>
-      <div class="cd-box"><b id="cd-s">٠</b><span>ثانية</span></div>
-    </div>
-  </div>
-</div>
-</header>
-
-<main class="wrap">
-
-<div class="tabs" role="tablist">
-<button class="tab" id="t-found" type="button" aria-selected="true">تأسيس</button>
-<button class="tab" id="t-practice" data-tab="practice" type="button" aria-selected="false">تدريب</button>
-<button class="tab" id="t-quiz" data-tab="quiz" type="button" aria-selected="false">كويزات</button>
-</div>
-
-<section class="panel" id="p-found">
-<h2>خطة التأسيس</h2>
-<p class="hint">اختر المادة وعدد المحاضرات والأيام، ونقسمها لك على الأيام.</p>
-
-<span class="label">المادة</span>
-<div class="chips">
-
-<label class="chip" style="--c:var(--math)">
-<input type="radio" name="subj" value="math" checked>
-<span>الرياضيات</span>
-</label>
-
-<label class="chip" style="--c:var(--phys)">
-<input type="radio" name="subj" value="phys">
-<span>الفيزياء</span>
-</label>
-
-<label class="chip" style="--c:var(--chem)">
-<input type="radio" name="subj" value="chem">
-<span>الكيمياء</span>
-</label>
-
-<label class="chip" style="--c:var(--bio)">
-<input type="radio" name="subj" value="bio">
-<span>الأحياء</span>
-</label>
-
-</div>
-
-<div class="fields">
-<div>
-<label class="label" for="lec">كم عدد المحاضرات؟</label>
-<input type="number" id="lec" min="1" max="300" value="24">
-</div>
-<div>
-<label class="label" for="fdays">كم يوم تبي تخلصها فيه؟</label>
-<input type="number" id="fdays" min="1" max="120" value="8">
-</div>
-</div>
-
-<button class="go" id="go-found" type="button">سوّي لي الجدول</button>
-<p class="err" id="err-found"></p>
-</section>
-
-<section class="panel" id="p-practice" hidden>
-<h2>خطة التدريب</h2>
-<p class="hint">حدد عدد الأسئلة وعدد الأيام، ونوزعها لك بالتساوي.</p>
-
-<div class="fields">
-<div>
-<label class="label" for="qs">كم عدد الأسئلة؟</label>
-<input type="number" id="qs" min="1" max="5000" value="300">
-</div>
-<div>
-<label class="label" for="pdays">كم يوم؟</label>
-<input type="number" id="pdays" min="1" max="120" value="10">
-</div>
-</div>
-
-<button class="go practice" id="go-practice" type="button">سوّي لي الجدول</button>
-<p class="err" id="err-practice"></p>
-</section>
-
-<section class="panel" id="p-quiz" hidden>
-<h2>الكويزات</h2>
-<p class="hint" id="quiz-hint"></p>
-<div id="quiz-home"></div>
-<div id="quiz-view" hidden></div>
-</section>
-
-<section id="result" hidden></section>
-
-<section class="telegram-area">
-<button class="telegram-toggle" id="telegram-toggle" type="button" aria-expanded="false">
-قنوات التليجرام <span class="arrow">⌄</span>
-</button>
-
-<div class="telegram-list" id="telegram-list">
-<div class="telegram-list-inner">
-<div class="channel-grid">
-
-<a class="channel-link" href="https://t.me/uloost" target="_blank" rel="noopener noreferrer">
-<span><strong>القناة الرئيسية</strong><small>t.me/uloost</small></span>
-<span class="tg-icon">✈</span>
-</a>
-
-<a class="channel-link" href="https://t.me/w_9lr" target="_blank" rel="noopener noreferrer">
-<span><strong>قناة الكويزات</strong><small>@w_9lr</small></span>
-<span class="tg-icon">✈</span>
-</a>
-
-<a class="channel-link" href="https://t.me/w_1lr" target="_blank" rel="noopener noreferrer">
-<span><strong>قناة الملفات والملخصات</strong><small>@w_1lr</small></span>
-<span class="tg-icon">✈</span>
-</a>
-
-<a class="channel-link" href="https://t.me/w_2lr" target="_blank" rel="noopener noreferrer">
-<span><strong>مجموعة المناقشة</strong><small>@w_2lr</small></span>
-<span class="tg-icon">✈</span>
-</a>
-
-</div>
-</div>
-</div>
-</section>
-
-<section class="prayer">
-<h2>دعوة من القلب</h2>
-<p>
-اللهم وفّق كل طالبٍ وطالبة، واشرح صدورهم ويسّر أمورهم،
-وبارك في أوقاتهم وجهودهم، وارزقهم فهمًا وحفظًا وتوفيقًا،
-وبلّغهم أعلى الدرجات، وارزقهم ١٠٠ في التحصيلي،
-واجعل نجاحهم فرحةً لهم ولوالديهم، واكتب لهم الخير حيث كان.
-</p>
-</section>
-
-<section class="personal-prayer">
-<h3>دعوة خاصة</h3>
-<p>
-اللهم وفّق صاحب هذا المنبر، وافتح عليه فتوح العارفين،
-ويسّر له دراسته، وبارك له في وقته وجهده،
-وارزقه فهمًا لا ينسى، وحفظًا لا يتفلت،
-وبلّغه ١٠٠ في اختبار التحصيلي،
-واجعل هذا التفوق فرحةً له ولوالديه،
-واكتب له النجاح والتوفيق في الدنيا والآخرة.
-اللهم آمين.
-</p>
-</section>
-
-</main>
-
-<footer>منبر التحصيلي · كل يوم تنجزه يقربك من درجتك</footer>
-
-<script>
-(function(){
-
-"use strict";
-
-const $ = id => document.getElementById(id);
-const fmt = n => Number(n).toLocaleString("ar-EG");
-const esc = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-const STORAGE_KEY = "minbar_saved_study_plan_v2";
-const QUIZ_KEY = "minbar_quiz_progress_v1";
-
-/* موعد التحصيلي الاعتيادي (الفترة الأولى) - غيّره هنا إذا تغيّر الموعد الرسمي */
-const TAHSILI_DATE = new Date("2027-05-27T00:00:00+03:00");
-const TAHSILI_DATE_TEXT = "الفترة الأولى: ٢٧ مايو ٢٠٢٧";
-
-const subjects = {
-math:{name:"الرياضيات",color:"--math"},
-phys:{name:"الفيزياء",color:"--phys"},
-chem:{name:"الكيمياء",color:"--chem"},
-bio:{name:"الأحياء",color:"--bio"}
-};
-
-const cheers = [
-"بداية ممتازة، أصعب خطوة هي أول يوم وانت تجاوزتها!",
-"كل محاضرة تخلصها تقربك من الهدف، كمّل!",
-"الالتزام اليوم هو درجتك بكرة.",
-"ما أحد وصل للقمة وهو متكاسل، وانت ماشي صح.",
-"يوم ورا يوم وتشوف الفرق بنفسك.",
-"تعبك اليوم راحة لك يوم الاختبار.",
-"انت أقوى مما تتخيل، لا توقف.",
-"الاستمرار أهم من الكمال، أحسنت!",
-"ثقتك بنفسك نص النجاح، والنص الثاني شغلك اليوم.",
-"خذ نفس عميق وافتخر بنفسك، يوم جديد تم إنجازه.",
-"قربت تخلص، لا تهدي السرعة الحين!",
-"حلمك يستاهل كل ساعة تذاكرها."
-];
-
-/* ===== عداد التحصيلي ===== */
-
-function tickCountdown(){
-let diff = TAHSILI_DATE.getTime() - Date.now();
-if(diff <= 0){
-$("cd-grid").style.display = "none";
-$("cd-date").textContent = "";
-document.querySelector(".cd-title").textContent = "بدأ التحصيلي الاعتيادي، الله يوفقك!";
-return false;
-}
-const s = Math.floor(diff/1000);
-$("cd-d").textContent = fmt(Math.floor(s/86400));
-$("cd-h").textContent = fmt(Math.floor(s%86400/3600));
-$("cd-m").textContent = fmt(Math.floor(s%3600/60));
-$("cd-s").textContent = fmt(s%60);
-return true;
-}
-
-$("cd-date").textContent = TAHSILI_DATE_TEXT;
-if(tickCountdown()){
-const cdTimer = setInterval(()=>{ if(!tickCountdown()) clearInterval(cdTimer); },1000);
-}
-
-/* حفظ الجدول */
-
-function savePlan(plan){
-try{
-localStorage.setItem(STORAGE_KEY,JSON.stringify(plan));
-}catch(error){
-console.warn("تعذر حفظ الجدول:",error);
-}
-}
-
-/* استرجاع الجدول */
-
-function readPlan(){
-try{
-const saved = localStorage.getItem(STORAGE_KEY);
-return saved ? JSON.parse(saved) : null;
-}catch(error){
-return null;
-}
-}
-
-/* حذف الجدول */
-
-function clearPlan(){
-try{
-localStorage.removeItem(STORAGE_KEY);
-}catch(error){}
-}
-
-/* توزيع المهام */
-
-function split(total,days){
-const base = Math.floor(total/days);
-const extra = total%days;
-let from = 1;
-const out = [];
-
-for(let i=0;i<days;i++){
-const count = base+(i<extra?1:0);
-
-out.push({
-from:from,
-to:from+count-1,
-count:count
-});
-
-from+=count;
-}
-
-return out;
-}
-
-/* حساب التقدم */
-
-function refresh(days){
-const done = days.filter(day=>
-day.querySelector("input").checked
-).length;
-
-const remaining = days.length-done;
-const percent = Math.round(done/days.length*100);
-
-$("sum-line").textContent =
-"أنجزت "+fmt(done)+" من "+fmt(days.length)+" يوم";
-
-$("bar").style.width = percent+"%";
-$("percent").textContent = percent+"% إنجاز";
-$("remaining").textContent = "متبقي "+fmt(remaining)+" يوم";
-$("finish").hidden = done!==days.length;
-}
-
-/* حفظ علامات الإنجاز */
-
-function saveChecks(days){
-const plan = readPlan();
-if(!plan)return;
-
-plan.checked = days.map(day=>
-day.querySelector("input").checked
-);
-
-savePlan(plan);
-}
-
-/* عرض الجدول */
-
-function render(plan,scroll=true){
-
-const kind = plan.kind;
-const title = plan.title;
-const color = plan.color;
-const parts = plan.parts;
-
-let html =
-'<div class="summary" style="--subj:var('+color+')">'+
-'<h3></h3>'+
-'<p id="sum-line"></p>'+
-'<div class="bar"><i id="bar"></i></div>'+
-'<div class="progress-details">'+
-'<span id="percent">0% إنجاز</span>'+
-'<span id="remaining"></span>'+
-'</div>'+
-'</div>'+
-'<button class="go pdf" id="pdf-btn" type="button">حفظ الجدول PDF</button>'+
-'<button class="go new-plan" id="new-plan-btn" type="button">إنشاء جدول جديد</button>'+
-'<div class="days">';
-
-parts.forEach((p,i)=>{
-
-let task,sub;
-
-if(kind==="found"){
-task = p.count===1
-?"المحاضرة "+fmt(p.from)
-:"من المحاضرة "+fmt(p.from)+" إلى المحاضرة "+fmt(
+.channel-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;padding-top:12px}
+.channel-link{display:flex;align-items:center;justify-content:space-between;gap:12px;text-decoration:none;color:white;background:var(--surface);border:1px solid var(--line);border-radius:13px;padding:13px 15px}
+.channel-link:hover{border-color:var(--brand)}.channel-link strong{display
