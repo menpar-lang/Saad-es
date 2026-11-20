@@ -1,234 +1,10 @@
-"use strict";
-(() => {
- const $ = id => document.getElementById(id);
- const number = n => Number(n).toLocaleString("ar-EG");
-
- /* عداد الاختبار: غيّر التاريخ التالي فقط عند اعتماد الموعد الرسمي. */
- const EXAM_DATE = "2027-05-27T00:00:00+03:00";
- function updateCountdown(){
-  const diff = new Date(EXAM_DATE).getTime() - Date.now();
-  if (!Number.isFinite(diff) || diff <= 0){
-   ["days","hours","minutes","seconds"].forEach(id => $(id).textContent = "00");
-   $("exam-label").textContent = "حان موعد الاختبار أو انتهى الموعد المحدد";
-   return;
-  }
-  $("days").textContent = number(Math.floor(diff / 86400000));
-  $("hours").textContent = String(Math.floor((diff % 86400000) / 3600000)).padStart(2,"0");
-  $("minutes").textContent = String(Math.floor((diff % 3600000) / 60000)).padStart(2,"0");
-  $("seconds").textContent = String(Math.floor((diff % 60000) / 1000)).padStart(2,"0");
- }
- updateCountdown();
- window.setInterval(updateCountdown, 1000);
-
- /* التبديل بين التأسيس والتدريب */
- document.querySelectorAll(".nav [role=tab]").forEach(tab => {
-  tab.addEventListener("click", () => {
-   const activeView = tab.dataset.view;
-   document.querySelectorAll(".nav [role=tab]").forEach(item => {
-    const active = item === tab;
-    item.setAttribute("aria-selected", String(active));
-    item.tabIndex = active ? 0 : -1;
-   });
-   $("view-foundation").hidden = activeView !== "foundation";
-   $("view-training").hidden = activeView !== "training";
-   if (activeView === "training") $("quiz-subject").focus({preventScroll:true});
-  });
- });
-
- /* إنشاء الجداول وحفظ الإنجاز */
- const STORAGE_KEY = "minbar_saved_study_plan_final";
- const subjects = {
-  math:{name:"الرياضيات",color:"#4d83ff"},
-  phys:{name:"الفيزياء",color:"#a876ff"},
-  chem:{name:"الكيمياء",color:"#ed9142"},
-  bio:{name:"الأحياء",color:"#35bd8b"}
- };
- const cheers = [
-  "بداية ممتازة، أحسنت!","كل يوم تنجزه يقربك من هدفك.",
-  "استمر، فالنتائج الكبيرة تبدأ بخطوات صغيرة.","تعبك اليوم يصنع فرقًا في يوم الاختبار.",
-  "الالتزام أهم من المثالية، واصل.","أنت تتقدم، لا تتوقف."
- ];
- function savePlan(plan){
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(plan)); }
-  catch(error){ console.warn("تعذر حفظ الجدول على هذا الجهاز", error); }
- }
- function readPlan(){
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "null"); }
-  catch(error){ return null; }
- }
- function clearPlan(){
-  try { localStorage.removeItem(STORAGE_KEY); } catch(error){ console.warn(error); }
- }
- function splitTasks(total, days){
-  const base = Math.floor(total / days), extra = total % days;
-  let first = 1;
-  return Array.from({length:days}, (_,i) => {
-   const count = base + (i < extra ? 1 : 0);
-   const task = {from:first, to:first + count - 1, count};
-   first += count;
-   return task;
-  });
- }
- function updateProgress(){
-  const entries = [...$("result").querySelectorAll(".day")];
-  const done = entries.filter(day => day.querySelector("input").checked).length;
-  const percent = entries.length ? Math.round(done / entries.length * 100) : 0;
-  $("sum-line").textContent = `أنجزت ${number(done)} من ${number(entries.length)} يوم`;
-  $("bar").style.width = percent + "%";
-  $("percent").textContent = percent + "% إنجاز";
-  $("remaining").textContent = `متبقي ${number(entries.length-done)} يوم`;
-  $("finish").hidden = done !== entries.length;
- }
- function renderPlan(plan, shouldScroll=true){
-  const result = $("result");
-  result.style.setProperty("--accent", plan.color);
-  let markup = `<div class="summary"><h3 id="plan-title"></h3><p id="sum-line"></p>
-    <div class="bar"><i id="bar"></i></div>
-    <div class="progress-details"><span id="percent">0% إنجاز</span><span id="remaining"></span></div></div>
-    <button class="btn light" id="pdf-btn" type="button">طباعة الجدول / حفظ PDF</button>
-    <button class="btn dark" id="new-plan-btn" type="button">إنشاء جدول جديد</button><div class="days">`;
-  plan.parts.forEach((part,index) => {
-   const taskText = plan.kind === "foundation"
-    ? (part.count === 1 ? `المحاضرة ${number(part.from)}` : `من المحاضرة ${number(part.from)} إلى ${number(part.to)}`)
-    : `${number(part.count)} سؤال`;
-   const detail = plan.kind === "foundation"
-    ? `${number(part.count)} محاضرة`
-    : `من السؤال ${number(part.from)} إلى ${number(part.to)}`;
-   const checked = plan.checked[index] === true;
-   markup += `<article class="day ${checked ? "is-done" : ""}">
-    <div class="day-body"><div class="day-top"><span class="day-no">اليوم ${number(index+1)}</span>
-    <label class="done"><input type="checkbox" data-day="${index}" ${checked ? "checked" : ""}> أنجزت اليوم</label></div>
-    <div class="task">${taskText}<small>${detail}</small></div></div>
-    <div class="cheer">${cheers[index % cheers.length]}</div></article>`;
-  });
-  markup += `</div><div class="finish" id="finish" hidden>مبروك! أنهيت الخطة كاملة. استمر على هذا المستوى.</div>`;
-  result.innerHTML = markup;
-  result.hidden = false;
-  $("plan-title").textContent = plan.title;
-  $("pdf-btn").addEventListener("click", () => window.print());
-  $("new-plan-btn").addEventListener("click", () => {
-   if (window.confirm("سيتم حذف الجدول الحالي من هذا الجهاز. هل تريد المتابعة؟")){
-    clearPlan(); result.hidden = true; result.innerHTML = "";
-    window.scrollTo({top:0,behavior:"smooth"});
-   }
-  });
-  result.querySelectorAll('input[type="checkbox"][data-day]').forEach(box => {
-   box.addEventListener("change", () => {
-    box.closest(".day").classList.toggle("is-done", box.checked);
-    const current = readPlan();
-    if (current && Array.isArray(current.parts)){
-     current.checked = [...result.querySelectorAll('input[type="checkbox"][data-day]')].map(input => input.checked);
-     savePlan(current);
-    }
-    updateProgress();
-   });
-  });
-  updateProgress();
-  if (shouldScroll) result.scrollIntoView({behavior:"smooth",block:"start"});
- }
- function createPlan(kind,title,color,parts){
-  const previous = readPlan();
-  if (previous && Array.isArray(previous.parts) && previous.parts.length &&
-      !window.confirm("لديك جدول محفوظ. هل تريد استبداله بالجدول الجديد؟")) return;
-  const plan = {kind,title,color,parts,checked:parts.map(() => false)};
-  savePlan(plan);
-  renderPlan(plan);
- }
- function validInt(id,min,max){
-  const value = Number($(id).value);
-  return Number.isInteger(value) && value >= min && value <= max ? value : null;
- }
- $("go-found").addEventListener("click", () => {
-  const lectures = validInt("lec",1,300), days = validInt("fdays",1,120);
-  const selected = document.querySelector('input[name="subj"]:checked');
-  if (!lectures || !days || !selected){
-   $("err-found").textContent = "تأكد من إدخال عدد المحاضرات من 1 إلى 300 وعدد الأيام من 1 إلى 120.";
-   return;
-  }
-  $("err-found").textContent = "";
-  const subject = subjects[selected.value];
-  createPlan("foundation",`تأسيس ${subject.name}: ${number(lectures)} محاضرة في ${number(days)} يوم`,subject.color,splitTasks(lectures,days));
- });
- $("go-practice").addEventListener("click", () => {
-  const questions = validInt("qs",1,5000), days = validInt("pdays",1,120);
-  if (!questions || !days){
-   $("err-practice").textContent = "تأكد من إدخال عدد الأسئلة من 1 إلى 5000 وعدد الأيام من 1 إلى 120.";
-   return;
-  }
-  $("err-practice").textContent = "";
-  createPlan("training",`تدريب: ${number(questions)} سؤال في ${number(days)} يوم`,"#ec5d91",splitTasks(questions,days));
- });
- const savedPlan = readPlan();
- if (savedPlan && ["foundation","training"].includes(savedPlan.kind) &&
-     typeof savedPlan.title === "string" && typeof savedPlan.color === "string" &&
-     Array.isArray(savedPlan.parts) && savedPlan.parts.length > 0 && savedPlan.parts.length <= 120){
-  if (!Array.isArray(savedPlan.checked) || savedPlan.checked.length !== savedPlan.parts.length)
-   savedPlan.checked = savedPlan.parts.map(() => false);
-  renderPlan(savedPlan,false);
- }
-
- /* بنك الأسئلة الأصلي: 250 سؤالًا لكل مادة = 1000 سؤال.
-    صُممت الأسئلة هنا للتدريب، وليست منقولة من تجميعات أو كتب محمية. */
- const questionBank = [];
- const subjectLabel = {math:"الرياضيات",phys:"الفيزياء",chem:"الكيمياء",bio:"الأحياء"};
- function addQuestion(subject,topic,question,answer,distractors,explanation){
-  const correct = String(answer);
-  const choices = [correct, ...distractors.map(String)].filter((v,i,a) => a.indexOf(v)===i).slice(0,4);
-  let fill = 1;
-  const numeric = /^(-?\d+(?:\.\d+)?)(.*)$/.exec(correct);
-  while(choices.length < 4){
-   const candidate = numeric
-    ? `${Number(numeric[1]) + fill * (fill % 2 ? 2 : -3)}${numeric[2]}`
-    : `خيار بديل ${fill}`;
-   if(!choices.includes(candidate)) choices.push(candidate);
-   fill++;
-  }
-  const rotate = questionBank.length % 4;
-  const arranged = choices.slice(rotate).concat(choices.slice(0,rotate));
-  questionBank.push({
-   id:questionBank.length+1,subject,topic,question,options:arranged,
-   answer:arranged.indexOf(correct),explain:explanation
-  });
- }
- const d3 = (a,b,c) => [a,b,c];
-
- /* الرياضيات: عشر مهارات × 25 سؤالًا */
- for(let i=1;i<=25;i++){
-  let a=14+i*3,b=7+i*2,s=a+b;
-  addQuestion("math","العمليات الحسابية",`احسب ناتج ${a} + ${b}.`,s,d3(s+2,s-2,s+10),`نجمع العددين: ${a} + ${b} = ${s}.`);
-  a=65+i*3;b=12+i;s=a-b;
-  addQuestion("math","العمليات الحسابية",`ما ناتج ${a} − ${b}؟`,s,d3(s+1,s-1,s+5),`نطرح ${b} من ${a} فيكون الناتج ${s}.`);
-  a=2+(i%9);b=4+(i%7);s=a*b;
-  addQuestion("math","الضرب والقسمة",`أوجد حاصل ضرب ${a} × ${b}.`,s,d3(s+a,s-b,s+2),`حاصل الضرب هو ${a} × ${b} = ${s}.`);
-  b=2+(i%8);const q=3+i*2;a=b*q;
-  addQuestion("math","الضرب والقسمة",`إذا كان ${a} ÷ ${b} = س، فما قيمة س؟`,q,d3(q+1,q-1,q+3),`نقسم ${a} على ${b}: الناتج ${q}.`);
-  const base=100+i*20,pct=[10,20,25,50,15][i%5],amount=base*pct/100;
-  addQuestion("math","النسبة المئوية",`كم تساوي ${pct}٪ من ${base}؟`,amount,d3(amount+5,amount-5,amount+10),`نحسب النسبة: ${base} × ${pct} ÷ 100 = ${amount}.`);
-  const coef=2+(i%7),x=i+2,constant=3+i*2,total=coef*x+constant;
-  addQuestion("math","المعادلات",`إذا كان ${coef}س + ${constant} = ${total}، فما قيمة س؟`,x,d3(x+1,x-1,-x),`نطرح ${constant} من الطرفين ثم نقسم على ${coef}، فنحصل على س = ${x}.`);
-  const n=i+3,sq=n*n;
-  addQuestion("math","القوى والجذور",`ما قيمة ${n}²؟`,sq,d3(sq+n,sq-1,sq+2),`تربيع ${n} يعني ${n} × ${n} = ${sq}.`);
-  const length=i+4,width=2+(i%7),area=length*width;
-  addQuestion("math","الهندسة",`مستطيل طوله ${length} سم وعرضه ${width} سم، فما مساحته؟`,area,d3(2*(length+width),area+length,area-width),`مساحة المستطيل = الطول × العرض = ${length} × ${width} = ${area} سم².`);
-  const mean=(i+(i+2)+(i+4))/3;
-  addQuestion("math","الإحصاء",`ما المتوسط الحسابي للأعداد ${i} و${i+2} و${i+4}؟`,mean,d3(mean+1,mean-1,mean+2),`المتوسط = مجموع القيم ÷ عددها = ${3*mean} ÷ 3 = ${mean}.`);
-  const first=i+1,step=2+(i%5),next=first+3*step;
-  addQuestion("math","المتتابعات",`ما العدد التالي في المتتابعة ${first}، ${first+step}، ${first+2*step}، ...؟`,next,d3(next+step,next-1,next+2),`الفرق ثابت ويساوي ${step}؛ لذا نضيفه إلى ${first+2*step} فيكون الناتج ${next}.`);
- }
-
- /* الفيزياء: عشر مهارات × 25 سؤالًا */
- for(let i=1;i<=25;i++){ 
-
-ملاحظة: المقتطف السابق كان جزءًا من JavaScript فقط. **انسخ النسخة التالية كاملة من أول سطر إلى آخر سطر**؛ وهي الملف نفسه الجاهز للتشغيل.
-
-```html
 <!doctype html>
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#70d1f5">
-<meta name="description" content="منبر التحصيلي - جداول تأسيس وتدريب وبنك أسئلة تفاعلي مجاني">
+<meta name="description" content="منبر التحصيلي - جداول تأسيس وتدريب وبنك أسئلة تفاعلي مجاني يحتوي على 1000 سؤال">
 <title>منبر التحصيلي</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -327,4 +103,211 @@ input:focus,select:focus,.text-input:focus{outline:2px solid var(--brand);border
 .telegram-list-inner{overflow:hidden;min-height:0}
 .channel-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;padding-top:12px}
 .channel-link{display:flex;align-items:center;justify-content:space-between;gap:12px;text-decoration:none;color:white;background:var(--surface);border:1px solid var(--line);border-radius:13px;padding:13px 15px}
-.channel-link:hover{border-color:var(--brand)}.channel-link strong{display
+.channel-link:hover{border-color:var(--brand)}.channel-link strong{display:block}
+.channel-link small{display:block;color:var(--muted);direction:ltr;text-align:right}
+.tg-icon{display:grid;place-items:center;width:37px;height:37px;border-radius:11px;background:#1d4770;color:#8dd3ff}
+.prayer,.personal-prayer{margin-top:17px;padding:18px 19px;border-radius:16px;text-align:center}
+.prayer{background:linear-gradient(145deg,#151d31,#211c3b);border:1px solid #34365a}
+.personal-prayer{background:#101a2b;border:1px solid #465080}
+.prayer h2,.personal-prayer h3{margin:0 0 8px;color:#d9d5ff;font-size:20px}
+.prayer p,.personal-prayer p{margin:0;color:#e5e8f5;line-height:2}
+footer{text-align:center;color:var(--muted);font-size:14px;padding:22px 0}
+@media(max-width:520px){
+ .hero{padding:22px 0 57px}.brand-copy h1{font-size:28px}.brand-copy p{font-size:13px}
+ .free-badge{padding:7px 10px;font-size:13px}.panel{padding:15px}
+ .nav button{font-size:17px;padding:11px 5px}.quiz-tools{grid-template-columns:1fr}
+}
+@media print{
+ body{background:white;color:#172036}
+ .hero,.countdown,.nav,.panel,.btn,.done,.telegram-area,.prayer,.personal-prayer,footer{display:none!important}
+ .summary,.cheer{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+ .day{break-inside:avoid}.day-body{color:#172036}.task small{color:#555}
+}
+</style>
+</head>
+<body>
+<header class="hero">
+ <div class="wrap hero-row">
+  <div class="brand-copy"><h1>منبر التحصيلي</h1><p>علمٌ يُتقن، وهدفٌ يُدرك</p></div>
+  <div class="free-badge">مجاني 100٪</div>
+ </div>
+</header>
+
+<main class="wrap">
+ <section class="countdown" aria-label="العد التنازلي للاختبار">
+  <div class="count-head"><h2>الوقت المتبقي على التحصيلي</h2><span class="count-label" id="exam-label">الفترة الأولى · 27 مايو 2027</span></div>
+  <div class="timer">
+   <div class="time-unit"><strong id="days">000</strong><span>يوم</span></div>
+   <div class="time-unit"><strong id="hours">00</strong><span>ساعة</span></div>
+   <div class="time-unit"><strong id="minutes">00</strong><span>دقيقة</span></div>
+   <div class="time-unit"><strong id="seconds">00</strong><span>ثانية</span></div>
+  </div>
+  <p class="count-note">الموعد مضبوط مبدئيًا على 27 مايو 2027؛ عدّل التاريخ في إعدادات الكود إذا صدر الموعد الرسمي بغير ذلك.</p>
+ </section>
+
+ <nav class="nav" role="tablist" aria-label="أقسام الدراسة">
+  <button type="button" role="tab" id="tab-foundation" data-view="foundation" aria-controls="view-foundation" aria-selected="true">التأسيس</button>
+  <button type="button" role="tab" id="tab-training" data-view="training" aria-controls="view-training" aria-selected="false">التدريب</button>
+ </nav>
+
+ <section id="view-foundation" role="tabpanel" aria-labelledby="tab-foundation">
+  <div class="panel">
+   <h2>جدول التأسيس</h2>
+   <p class="hint">اختر المادة وعدد المحاضرات والأيام، ونقسمها لك على الأيام بالتساوي.</p>
+   <span class="label">المادة</span>
+   <div class="chips">
+    <label class="chip" style="--c:var(--math)"><input type="radio" name="subj" value="math" checked><span>الرياضيات</span></label>
+    <label class="chip" style="--c:var(--phys)"><input type="radio" name="subj" value="phys"><span>الفيزياء</span></label>
+    <label class="chip" style="--c:var(--chem)"><input type="radio" name="subj" value="chem"><span>الكيمياء</span></label>
+    <label class="chip" style="--c:var(--bio)"><input type="radio" name="subj" value="bio"><span>الأحياء</span></label>
+   </div>
+   <div class="fields">
+    <div><label class="label" for="lec">عدد المحاضرات</label><input type="number" id="lec" min="1" max="300" value="24" inputmode="numeric"></div>
+    <div><label class="label" for="fdays">عدد الأيام</label><input type="number" id="fdays" min="1" max="120" value="8" inputmode="numeric"></div>
+   </div>
+   <button class="btn" id="go-found" type="button">أنشئ جدول التأسيس</button>
+   <p class="err" id="err-found" role="alert"></p>
+  </div>
+ </section>
+
+ <section id="view-training" role="tabpanel" aria-labelledby="tab-training" hidden>
+  <div class="panel">
+   <h2>جدول التدريب</h2>
+   <p class="hint">حدد عدد الأسئلة وعدد الأيام، ونوزّعها لك على الأيام.</p>
+   <div class="fields">
+    <div><label class="label" for="qs">عدد الأسئلة</label><input type="number" id="qs" min="1" max="5000" value="300" inputmode="numeric"></div>
+    <div><label class="label" for="pdays">عدد الأيام</label><input type="number" id="pdays" min="1" max="120" value="10" inputmode="numeric"></div>
+   </div>
+   <button class="btn pink" id="go-practice" type="button">أنشئ جدول التدريب</button>
+   <p class="err" id="err-practice" role="alert"></p>
+  </div>
+
+  <div class="panel">
+   <div class="bank-head"><h2>بنك الأسئلة الشامل</h2><span class="bank-count" id="bank-count">1000 سؤال</span></div>
+   <p class="hint">اختر المادة وعدد الأسئلة في الجولة (متوفر 1000 سؤال موزعة على جميع المواد). بعد كل إجابة يظهر التصحيح والشرح.</p>
+   <div class="quiz-tools">
+    <div><label class="label" for="quiz-subject">المادة</label>
+     <select id="quiz-subject">
+      <option value="all">جميع المواد (1000 سؤال)</option>
+      <option value="math">الرياضيات (250 سؤال)</option>
+      <option value="phys">الفيزياء (250 سؤال)</option>
+      <option value="chem">الكيمياء (250 سؤال)</option>
+      <option value="bio">الأحياء (250 سؤال)</option>
+     </select>
+    </div>
+    <div><label class="label" for="quiz-count">عدد الأسئلة</label>
+     <select id="quiz-count">
+      <option value="5">5 أسئلة</option>
+      <option value="10">10 أسئلة</option>
+      <option value="20">20 سؤالًا</option>
+      <option value="40">40 سؤالًا</option>
+      <option value="100">100 سؤال</option>
+     </select>
+    </div>
+   </div>
+   <button class="btn pink" id="start-quiz" type="button">ابدأ الاختبار</button>
+   <div id="quiz-area" aria-live="polite"></div>
+  </div>
+ </section>
+
+ <section id="result" hidden></section>
+
+ <section class="telegram-area">
+  <button class="telegram-toggle" id="telegram-toggle" type="button" aria-expanded="false" aria-controls="telegram-list">قنوات التليجرام <span class="arrow" aria-hidden="true">⌄</span></button>
+  <div class="telegram-list" id="telegram-list"><div class="telegram-list-inner"><div class="channel-grid">
+   <a class="channel-link" href="https://t.me/uloost" target="_blank" rel="noopener noreferrer"><span><strong>القناة الرئيسية</strong><small>t.me/uloost</small></span><span class="tg-icon" aria-hidden="true">✈</span></a>
+   <a class="channel-link" href="https://t.me/w_9lr" target="_blank" rel="noopener noreferrer"><span><strong>قناة الكويزات</strong><small>@w_9lr</small></span><span class="tg-icon" aria-hidden="true">✈</span></a>
+   <a class="channel-link" href="https://t.me/w_1lr" target="_blank" rel="noopener noreferrer"><span><strong>قناة الملفات والملخصات</strong><small>@w_1lr</small></span><span class="tg-icon" aria-hidden="true">✈</span></a>
+   <a class="channel-link" href="https://t.me/w_2lr" target="_blank" rel="noopener noreferrer"><span><strong>مجموعة المناقشة</strong><small>@w_2lr</small></span><span class="tg-icon" aria-hidden="true">✈</span></a>
+  </div></div></div>
+ </section>
+ <section class="prayer"><h2>دعوة من القلب</h2><p>اللهم وفّق كل طالبٍ وطالبة، واشرح صدورهم ويسّر أمورهم، وبارك في أوقاتهم وجهودهم، وارزقهم فهمًا وحفظًا وتوفيقًا، وبلّغهم أعلى الدرجات، واجعل نجاحهم فرحةً لهم ولوالديهم، واكتب لهم الخير حيث كان.</p></section>
+ <section class="personal-prayer"><h3>دعوة خاصة</h3><p>اللهم وفّق صاحب هذا المنبر، وافتح عليه فتوح العارفين، ويسّر له دراسته، وبارك له في وقته وجهده، وارزقه فهمًا لا ينسى، وحفظًا لا يتفلت، وبلّغه أعلى الدرجات، واجعل هذا التفوق فرحةً له ولوالديه، واكتب له النجاح والتوفيق في الدنيا والآخرة. اللهم آمين.</p></section>
+</main>
+<footer class="wrap">منبر التحصيلي · كل يوم تنجزه يقربك من درجتك</footer>
+
+<script>
+"use strict";
+(() => {
+ const $ = id => document.getElementById(id);
+ const number = n => Number(n).toLocaleString("ar-EG");
+
+ const EXAM_DATE = "2027-05-27T00:00:00+03:00";
+ function updateCountdown(){
+  const diff = new Date(EXAM_DATE).getTime() - Date.now();
+  if (!Number.isFinite(diff) || diff <= 0){
+   ["days","hours","minutes","seconds"].forEach(id => $(id).textContent = "00");
+   $("exam-label").textContent = "حان موعد الاختبار أو انتهى الموعد المحدد";
+   return;
+  }
+  $("days").textContent = number(Math.floor(diff / 86400000));
+  $("hours").textContent = String(Math.floor((diff % 86400000) / 3600000)).padStart(2,"0");
+  $("minutes").textContent = String(Math.floor((diff % 3600000) / 60000)).padStart(2,"0");
+  $("seconds").textContent = String(Math.floor((diff % 60000) / 1000)).padStart(2,"0");
+ }
+ updateCountdown();
+ window.setInterval(updateCountdown, 1000);
+
+ document.querySelectorAll(".nav [role=tab]").forEach(tab => {
+  tab.addEventListener("click", () => {
+   const activeView = tab.dataset.view;
+   document.querySelectorAll(".nav [role=tab]").forEach(item => {
+    const active = item === tab;
+    item.setAttribute("aria-selected", String(active));
+    item.tabIndex = active ? 0 : -1;
+   });
+   $("view-foundation").hidden = activeView !== "foundation";
+   $("view-training").hidden = activeView !== "training";
+   if (activeView === "training") $("quiz-subject").focus({preventScroll:true});
+  });
+ });
+
+ const STORAGE_KEY = "minbar_saved_study_plan_final";
+ const subjects = {
+  math:{name:"الرياضيات",color:"#4d83ff"},
+  phys:{name:"الفيزياء",color:"#a876ff"},
+  chem:{name:"الكيمياء",color:"#ed9142"},
+  bio:{name:"الأحياء",color:"#35bd8b"}
+ };
+ const cheers = [
+  "بداية ممتازة، أحسنت!","كل يوم تنجزه يقربك من هدفك.",
+  "استمر، فالنتائج الكبيرة تبدأ بخطوات صغيرة.","تعبك اليوم يصنع فرقًا في يوم الاختبار.",
+  "الالتزام أهم من المثالية، واصل.","أنت تتقدم، لا تتوقف."
+ ];
+ function savePlan(plan){
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(plan)); }
+  catch(error){ console.warn("تعذر حفظ الجدول على هذا الجهاز", error); }
+ }
+ function readPlan(){
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "null"); }
+  catch(error){ return null; }
+ }
+ function clearPlan(){
+  try { localStorage.removeItem(STORAGE_KEY); } catch(error){ console.warn(error); }
+ }
+ function splitTasks(total, days){
+  const base = Math.floor(total / days), extra = total % days;
+  let first = 1;
+  return Array.from({length:days}, (_,i) => {
+   const count = base + (i < extra ? 1 : 0);
+   const task = {from:first, to:first + count - 1, count};
+   first += count;
+   return task;
+  });
+ }
+ function updateProgress(){
+  const entries = [...$("result").querySelectorAll(".day")];
+  const done = entries.filter(day => day.querySelector("input").checked).length;
+  const percent = entries.length ? Math.round(done / entries.length * 100) : 0;
+  $("sum-line").textContent = `أنجزت ${number(done)} من ${number(entries.length)} يوم`;
+  $("bar").style.width = percent + "%";
+  $("percent").textContent = percent + "% إنجاز";
+  $("remaining").textContent = `متبقي ${number(entries.length-done)} يوم`;
+  $("finish").hidden = done !== entries.length;
+ }
+ function renderPlan(plan, shouldScroll=true){
+  const result = $("result");
+  result.style.setProperty("--accent", plan.color);
+  let markup = `<div class="summary"><h3 id="plan-title"></h3><p id="sum-line"></p>
+    <div class="bar"><i id="bar"></i></div>
+    <div class="progress-details"><span id="perce
